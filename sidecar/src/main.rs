@@ -170,6 +170,12 @@ enum Commands {
         /// Check health interval, default 20 [unit: seconds]
         #[arg(long, default_value = "20")]
         check_interval: u64,
+        /// Send heartbeat interval, default 10 [unit: seconds]
+        #[arg(long, default_value = "10")]
+        heartbeat_interval: u64,
+        /// Timeout of the http client, default 4 [unit: seconds]
+        #[arg(long, default_value = "4")]
+        client_timeout: u64,
         /// Enable backup, choose a storage type, one of ['s3', 'pv']
         #[arg(long)]
         backup_type: Option<String>,
@@ -185,6 +191,12 @@ enum Commands {
         /// Sidecar operators
         #[arg(long, value_parser = parse_members)]
         members: HashMap<String, String>,
+        /// Deploy operators address
+        #[arg(long)]
+        deploy_op_addr: String,
+        /// Status server listen address
+        #[arg(long, default_value = "0.0.0.0:8080")]
+        status_listen_addr: String,
     },
     /// Generate xline configuration file
     Gen {
@@ -235,11 +247,15 @@ async fn main() -> Result<()> {
     match cli.command {
         Commands::Run {
             check_interval,
+            heartbeat_interval,
+            client_timeout,
             backup_type,
             s3_path,
             s3_secret,
             pv_path,
             members,
+            deploy_op_addr,
+            status_listen_addr,
         } => {
             let backup = backup_type
                 .map(|kind| match kind.as_str() {
@@ -258,7 +274,11 @@ async fn main() -> Result<()> {
             let config = Config::new(
                 cli.name,
                 members,
+                deploy_op_addr,
+                status_listen_addr,
                 Duration::from_secs(check_interval),
+                Duration::from_secs(heartbeat_interval),
+                Duration::from_secs(client_timeout),
                 backup,
             );
             Operator::new(config).run().await

@@ -152,5 +152,7 @@
 pub mod config;
 /// Sidecar operator controller
 mod controller;
+/// Maintain health status among opertors
+mod health;
 /// Sidecar operator
 pub mod operator;

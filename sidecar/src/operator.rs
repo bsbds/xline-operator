@@ -1,11 +1,15 @@
 #![allow(dead_code)] // TODO remove when it is implemented
 
+use std::net::SocketAddr;
+
 use anyhow::Result;
+use axum::{routing::get, Router};
 use tracing::{debug, error, info, warn};
 
 use crate::config::Config;
 use crate::controller::Controller;
 use crate::controller::Error;
+use crate::health::Health;
 
 /// Sidecar operator
 #[derive(Debug)]
@@ -39,6 +43,18 @@ impl Operator {
         };
         tokio::pin!(forceful_shutdown);
 
+        let listen_addr = self.config.status_listen_addr.parse()?;
+        let _ws_handle = tokio::spawn(Self::web_server(listen_addr));
+
+        let op_health = Health::new(
+            self.config.name.clone(),
+            self.config.members.clone(),
+            &self.config.deploy_op_addr,
+            self.config.heartbeat_interval,
+            self.config.client_timeout,
+        )?;
+        let _hb_handle = tokio::spawn(op_health.probe_task());
+
         let mut controller = Controller::new(self.config.clone());
         #[allow(clippy::integer_arithmetic)] // this error originates in the macro `tokio::select`
         loop {
@@ -63,6 +79,22 @@ impl Operator {
                 }
             }
         }
+        Ok(())
+    }
+
+    /// Run a server that exposes this operator's status
+    async fn web_server(listen_addr: SocketAddr) -> Result<()> {
+        let status = Router::new().route(
+            "/health",
+            get(|| async {
+                debug!("received health request");
+            }),
+        );
+
+        axum::Server::bind(&listen_addr)
+            .serve(status.into_make_service())
+            .await?;
+
         Ok(())
     }
 }
