@@ -17,4 +17,10 @@ pub struct Config {
     /// Whether to create CRD regardless of current version on k8s
     #[arg(long, default_value = "false")]
     pub create_crd: bool,
+    /// maximum interval between accepted `HeartbeatStatus`
+    #[arg(long, default_value = "2")]
+    pub heartbeat_period: u64,
+    /// unreachable counter threshold
+    #[arg(long, default_value = "4")]
+    pub unreachable_thresh: usize,
 }

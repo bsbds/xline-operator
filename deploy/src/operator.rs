@@ -1,19 +1,27 @@
 use std::cmp::Ordering;
 use std::collections::HashMap;
+use std::net::SocketAddr;
 use std::sync::Arc;
 
 use anyhow::Result;
+use axum::routing::post;
+use axum::{Json, Router};
+use flume::Sender;
+use futures::FutureExt;
 use futures::StreamExt;
 use k8s_openapi::apiextensions_apiserver::pkg::apis::apiextensions::v1::CustomResourceDefinition;
 use kube::api::{ListParams, Patch, PatchParams, PostParams};
 use kube::runtime::watcher::Config as WatcherConfig;
 use kube::runtime::Controller;
 use kube::{Api, Client, CustomResourceExt, Resource};
-use tracing::debug;
+use operator_api::HeartbeatStatus;
+use tokio::signal;
+use tracing::{debug, error};
 
 use crate::config::Config;
 use crate::controller::{on_error, reconcile, Context};
 use crate::crd::Cluster;
+use crate::sidecar_state::SidecarState;
 use crate::utils::compare_versions;
 
 /// Deployment Operator for k8s
@@ -46,6 +54,21 @@ impl Operator {
             Api::namespaced(kube_client.clone(), self.config.namespace.as_str())
         };
         let cx: Arc<Context> = Arc::new(Context { kube_client });
+
+        let (status_tx, status_rx) = flume::unbounded();
+
+        let _ws_handle = tokio::spawn(Self::web_server(
+            self.config.listen_addr.parse()?,
+            status_tx,
+        ));
+
+        let state = SidecarState::new(
+            status_rx,
+            self.config.heartbeat_period,
+            cluster_api.clone(),
+            self.config.unreachable_thresh,
+        );
+        let _su_handle = tokio::spawn(state.state_update_task());
 
         Controller::new(cluster_api.clone(), WatcherConfig::default())
             .shutdown_on_signal()
@@ -123,6 +146,25 @@ impl Operator {
                 }
             }
         }
+
+        Ok(())
+    }
+
+    /// Run a server that receive sidecar operators' status
+    async fn web_server(listen_addr: SocketAddr, status_tx: Sender<HeartbeatStatus>) -> Result<()> {
+        let status = Router::new().route(
+            "/status",
+            post(|body: Json<HeartbeatStatus>| async move {
+                if let Err(e) = status_tx.send(body.0) {
+                    error!("channel send error: {e}");
+                }
+            }),
+        );
+
+        axum::Server::bind(&listen_addr)
+            .serve(status.into_make_service())
+            .with_graceful_shutdown(signal::ctrl_c().map(|_| ()))
+            .await?;
 
         Ok(())
     }

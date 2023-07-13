@@ -156,5 +156,7 @@ mod controller;
 mod crd;
 /// Deploy operator
 pub mod operator;
+/// Maintain the state of sidecar operators
+mod sidecar_state;
 /// Utils
 mod utils;
